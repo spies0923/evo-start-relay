@@ -1,0 +1,31 @@
+{
+  "name": "evo-start-relay",
+  "version": "1.0.0",
+  "description": "Control an EvoStart / Fortin EVO-START LTE remote starter (hyll / ZXY268 cloud) via a token-gated HTTP API — works with Home Assistant, Homebridge, voice assistants, or any smart-home platform. Reverse-engineered, zero-dependency.",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "evostart",
+    "fortin",
+    "evo-start",
+    "zxy268",
+    "hyll",
+    "remote-start",
+    "home-assistant",
+    "homebridge",
+    "smart-home",
+    "google-home",
+    "reverse-engineering"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cnghockey/evo-start-relay.git"
+  }
+}

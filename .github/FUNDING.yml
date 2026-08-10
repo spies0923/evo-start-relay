@@ -1,0 +1,4 @@
+# Bitcoin Lightning only: sats4ai@blink.sv is a Lightning address (pay from any Lightning wallet).
+custom:
+  - "https://sats4ai.com"
+  - "lightning:sats4ai@blink.sv"
