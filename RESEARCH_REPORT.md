@@ -185,6 +185,11 @@ Sources to check:
 
 The same question applies to a documented **status output** (for example remote-start-active).
 
+> **Phase 2 update:** see [EVO_ONE_INTERFACE_RESEARCH.md](EVO_ONE_INTERFACE_RESEARCH.md) and
+> [PHASE2_DECISION.md](PHASE2_DECISION.md). Fortin's option tables name Function #38 mode 3,
+> "Start/Stop on trigger shock sensor". Its electrical details and its coexistence with 3× Lock
+> await Fortin confirmation. The RS-232 data-link has no public third-party specification.
+
 ## 7. Approaches considered and rejected
 
 | Approach | Why it is rejected |

@@ -29,13 +29,30 @@ test('valid command runs once and returns an ack signed by the device', async ()
   assert.ok(cli.verifyAck(ack, dev.publicKey));
 });
 
-test('replaying the same signed frame is rejected', async () => {
+test('re-delivering the same signed frame never actuates twice (cached ack returned)', async () => {
   const { ctl, cli, calls } = rig();
   const req = cli.command('start');
-  await ctl.handle(req);
+  const first = await ctl.handle(req);
   const again = await ctl.handle(JSON.parse(JSON.stringify(req)));
-  assert.strictEqual(again.msg.reason, 'replay');
+  assert.deepStrictEqual(again, first);
   assert.deepStrictEqual(calls, ['start']);
+});
+
+test('a captured frame replayed after a newer command is rejected as replay', async () => {
+  const { ctl, cli, calls } = rig();
+  const captured = cli.command('unlock');
+  await ctl.handle(captured);
+  await ctl.handle(cli.command('lock'));
+  assert.strictEqual((await ctl.handle(captured)).msg.reason, 'replay');
+  assert.deepStrictEqual(calls, ['unlock', 'lock']);
+});
+
+test('expired command is rejected even inside the clock-skew window', async () => {
+  const { ctl, cli, t, calls } = rig();
+  const req = cli.command('start'); // ttl 60 s
+  t.now += 90 * 1000;
+  assert.strictEqual((await ctl.handle(req)).msg.reason, 'expired');
+  assert.deepStrictEqual(calls, []);
 });
 
 test('an older, never-delivered frame is rejected once a newer one ran', async () => {
@@ -105,12 +122,65 @@ test('counter survives a controller "reboot" via the persisted store', async () 
   assert.strictEqual((await rebooted.handle(req)).msg.reason, 'replay');
 });
 
-test('actuator failure is reported, and the counter is still consumed', async () => {
+test('actuator failure is reported once, and the counter is still consumed', async () => {
   const { dev, phone } = rig();
-  const ctl = makeController({ deviceId: 'car-1', privateKey: dev.privateKey, clock: () => 1_800_000_000_000, actuator: async () => { throw new Error('no'); } });
+  let n = 0;
+  const ctl = makeController({ deviceId: 'car-1', privateKey: dev.privateKey, clock: () => 1_800_000_000_000, actuator: async () => { n++; throw new Error('no'); } });
   ctl.enrol(phone.publicKey);
   const cli = makeClient({ deviceId: 'car-1', ...phone, clock: () => 1_800_000_000_000 });
   const req = cli.command('start');
   assert.strictEqual((await ctl.handle(req)).msg.reason, 'actuator_error');
-  assert.strictEqual((await ctl.handle(req)).msg.reason, 'replay');
+  assert.strictEqual((await ctl.handle(req)).msg.reason, 'actuator_error');
+  assert.strictEqual(n, 1);
+  assert.strictEqual(ctl.store.counters[cli.kid], 1);
+});
+
+test('maintenance mode, rate-limit history and keys survive a reboot via the store', async () => {
+  const { ctl, cli, dev } = rig();
+  for (let i = 0; i < 3; i++) await ctl.handle(cli.command('start'));
+  ctl.setMaintenance(true);
+  const saved = JSON.parse(JSON.stringify(ctl.store)); // JSON-safe, like NVS
+  const calls = [];
+  const rebooted = makeController({ deviceId: 'car-1', privateKey: dev.privateKey, store: saved, clock: () => 1_800_000_000_000, actuator: async (c) => { calls.push(c); } });
+  assert.strictEqual((await rebooted.handle(cli.command('start'))).msg.reason, 'remote_disabled');
+  rebooted.setMaintenance(false);
+  assert.strictEqual((await rebooted.handle(cli.command('start'))).msg.reason, 'rate_limited');
+  assert.deepStrictEqual(calls, []);
+});
+
+test('persist failure blocks actuation', async () => {
+  const { dev, phone } = rig();
+  let fail = false;
+  const calls = [];
+  const ctl = makeController({ deviceId: 'car-1', privateKey: dev.privateKey, clock: () => 1_800_000_000_000,
+    persist: () => { if (fail) throw new Error('flash'); }, actuator: async (c) => { calls.push(c); } });
+  ctl.enrol(phone.publicKey);
+  fail = true;
+  const cli = makeClient({ deviceId: 'car-1', ...phone, clock: () => 1_800_000_000_000 });
+  assert.strictEqual((await ctl.handle(cli.command('start'))).msg.reason, 'storage_error');
+  assert.deepStrictEqual(calls, []);
+});
+
+test('hardware inhibit (kill switch) blocks actuating commands but not status', async () => {
+  const { dev, phone } = rig();
+  const calls = [];
+  const ctl = makeController({ deviceId: 'car-1', privateKey: dev.privateKey, clock: () => 1_800_000_000_000, isInhibited: () => true, actuator: async (c) => { calls.push(c); } });
+  ctl.enrol(phone.publicKey);
+  const cli = makeClient({ deviceId: 'car-1', ...phone, clock: () => 1_800_000_000_000 });
+  assert.strictEqual((await ctl.handle(cli.command('start'))).msg.reason, 'inhibited');
+  assert.strictEqual((await ctl.handle(cli.command('status'))).msg.ok, true);
+  assert.deepStrictEqual(calls, ['status']);
+});
+
+test('every decision is audit-logged', async () => {
+  const { dev, phone } = rig();
+  const log = [];
+  const ctl = makeController({ deviceId: 'car-1', privateKey: dev.privateKey, clock: () => 1_800_000_000_000, audit: (e) => log.push(e), actuator: async () => {} });
+  const kid = ctl.enrol(phone.publicKey);
+  const cli = makeClient({ deviceId: 'car-1', ...phone, clock: () => 1_800_000_000_000 });
+  await ctl.handle(cli.command('start'));
+  const bad = cli.command('stop'); bad.msg.cmd = 'start';
+  await ctl.handle(bad);
+  assert.deepStrictEqual(log.map((e) => e.event || `${e.cmd}:${e.reason}`), ['enrol', 'start:ok', 'start:bad_signature']);
+  assert.strictEqual(log[1].kid, kid);
 });
